@@ -113,14 +113,19 @@ class beam(object):
                          [-3.,-2.,-1.,0.,1.,2.,3.],
                          [-3.,-2.,-1.,0.,1.,2.,3.]]);
         
-        self.gridshape = self.Ygrid.shape;                 
+        self.gridshape = self.Ygrid.shape; 
+        self.elements = self.Ygrid.size;  #number of elements
+        
+        #These next variables are locations transformed into Az coords.
         self.AzYgrid = np.zeros(self.gridshape);
-        self.AzXgrid = np.zeros(self.gridshape);  
+        self.AzYarray =AzYgrid.reshape(elements);
+        
+        self.AzXgrid = np.zeros(self.gridshape); 
+        self.AzXarray= AzXgrid.reshape(elements);
                
         #This initial condition sends a beam out the boresight.  Remember, the
         #zeros are the phase angles of the unit power vectors at each AIP.
         self.BeamDelays= np.zeros(self.gridshape);
-        self.elements = self.Ygrid.size;  #number of elements
         
     def AzRotate(self,az):
         # provides the x and y positions of the array AIPs, in
@@ -134,8 +139,9 @@ class beam(object):
         # Python question: can I assume the "self." eg on self.Xgrid? A:no.
         
         #I need a view or something to index through with one iterator. In 
-        #the below, matrix.reshape does not remove a dimension.
-        Xarray=self.Xgrid.A1;      #Danger: no copy. ObjRef.
+        #the below, matrix.reshape does not remove a dimension, but .A1 method 
+        #returns a collapsed Array view. (view means objref: not a copy)
+        Xarray=self.Xgrid.A1;       #Danger: no copy. ObjRef.
         Yarray=self.Ygrid.A1;
         for i in range(0, self.elements) :
             self.AzYgrid.A1[i] = -Xarray[i]*sinAz + Yarray[i]*cosAz;
@@ -186,59 +192,6 @@ class beam(object):
 # N.B. This is not a class method.
 # N.B. fn definition syntax that puts defaults into the parameter list.
 
-beamFormExample();
+#beamFormExample();
     
     
-#==============================================================================
-#    Here are comments motivating this program.
-#    
-#    For n beams…  This first note is just reminder that we will do this 
-#     several times, completely independently, and later sum them at the AIP. 
-#     
-# Define the beam as a phase ramp, applied across the aperture in a particular 
-# azimuthal direction.  I’m tempted to call these angles Az and Squint, since the
-# second one is deviation from mechanical boresight. Call Az, El however, as 
-# that is a little more familiar, though this is kind of the complement of 
-# canonical elevation.  Imagine starting in beam co-ords with 100% vertically 
-# aligned, zero-angle phasors.
-# 
-# Transform to antenna coordinates by applying the phase ramp, in the Az 
-# direction. (Can I be clearer about this? Given an AIP coordinate, rotate 
-# through Az halfway to beam frame. In this intermediate frame, the AIP x-coord 
-# is perpendicular to LOS, and y-coordinate needs phase delay proportionate to 
-# El command and the value of y.)
-# 
-# 
-# Next transform to null LOS coordinates, where the newly assigned beam delay 
-# adds to another geometric delay instantiated by the null LOS. Here we hope for 
-# a random looking set, which aggregates to zero. Whatever is left is sidelobe, 
-# which must be nulled.  The value of that phase sum is negated and “applied” 
-# to only those AIPs whose phasor, viewed in the null frame, is substantially 
-# perpendicular to the error.  This will demand the least total modifications 
-# to the ideal beam.
-# 
-# 
-# Repeat this process for all the other nulls.
-# 
-# 
-# Consider an iterative procedure, where the main beam is viewed again and 
-# moderately corrected?  Every error from zero phase will have been applied in 
-# pursuit of achieving a null so “repairing” the main beam would be both 
-# trivial, and catastrophic to the null formation.  However, it may be 
-# worthwhile to sweep through the nulls again making another round of even 
-# smaller adjustments to converge (?) the AIP phasors to values mutually 
-# satisfactory to all the null beams.
-# 
-# 
-# I think all the null beam settings can be computed at once with a pseudo-
-# inverse.  It’s trivial to compute d(phasorSum)/d(AIP phase) for each AIP, 
-# which represents a vector of weights. Assembled, these make a matrix as wide 
-# as element count and tall as # of nulls. In [A]x=b notation, where b is the 
-# command vector, solve for x using pseudoinverse where b is -1 times the 
-# residual phase in each null.  The command vector could be chosen to achieve 
-# sufficient reduction (eg -40dB, vs the main beam) without requiring perfect 
-# nulling.  Ideally the inverse would allow inequalities like <= in this 
-# calculation. Hopefully in the presumably rare case where a deep null is found 
-# in a desired direction, it will not be really bad to make the tiny corrections 
-# required to “lift” it up to the specified attenuation.
-#==============================================================================
