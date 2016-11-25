@@ -4,6 +4,7 @@ Created on Thu Nov 24 19:44:52 2016
 
 @author: mark
 """
+#As of 10:40AM, 25Nov'16, I pushed this into github.
 
 import numpy as np
 # This tool is intended to plot a beam and a few nulls,
