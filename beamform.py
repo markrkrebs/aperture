@@ -21,9 +21,6 @@ import numpy as np
 #-----------Supporting class-------------------------------------------
 
                          
-wavelength = 2.5;  #meters, wavelength we're working with
-
-
                          
 class beam(object):
     def __init__(self):
@@ -31,13 +28,13 @@ class beam(object):
         # Here are some coordinates to start with, for a 7x7 array.
         # Note the center element is at Xgrid=0, Ygrid=0.
         # Later, I should pass these in, instead.
-        self.Ygrid =np.matrix([[-3.,-3.,-3.,-3.,-3.,-3.,-3.],
-                         [-2.,-2.,-2.,-2.,-2.,-2.,-2.],
-                         [-1.,-1.,-1.,-1.,-1.,-1.,-1.],
-                         [0.,0.,0.,0.,0.,0.,0.],
-                         [1.,1.,1.,1.,1.,1.,1.],
+        self.Ygrid =np.matrix([[3.,3.,3.,3.,3.,3.,3.],
                          [2.,2.,2.,2.,2.,2.,2.],
-                         [3.,3.,3.,3.,3.,3.,3.]]);
+                         [1.,1.,1.,1.,1.,1.,1.],
+                         [0.,0.,0.,0.,0.,0.,0.],
+                         [-1.,-1.,-1.,-1.,-1.,-1.,-1.],
+                         [-2.,-2.,-2.,-2.,-2.,-2.,-2.],
+                         [-3.,-3.,-3.,-3.,-3.,-3.,-3.]]);
         self.Xgrid= np.matrix([[-3.,-2.,-1.,0.,1.,2.,3.],
                          [-3.,-2.,-1.,0.,1.,2.,3.],
                          [-3.,-2.,-1.,0.,1.,2.,3.],
@@ -47,15 +44,43 @@ class beam(object):
                          [-3.,-2.,-1.,0.,1.,2.,3.]]);
         
         self.elements = self.Ygrid.size;  #number of elements
+        
+        self.wavelength = 5.;  #meters
                
         #This initial condition sends a beam out the boresight.  Remember, the
         #zeros are the phase angles of the unit power vectors at each AIP.
         self.BeamDelays= np.zeros(self.elements);
       
-    def calcGain(self,Az,El):
+    def calcGain(self,az,el):
+        yVals=self.AzRotate(az); #get new y-values at this Az.
         
-        ArrayFactor=0.;
-        return(ArrayFactor);
+        #Now get the geometric delays from this off-axis sidelobe direction.
+        SideLobeDelays = np.matrix(self.BeamDelays);
+        
+        c= 3.e8;  #m/sec, speed of light
+        
+        #how much addtl delay must we add for every meter in -x
+        delayRamp = sin(el)/c;  #something like this
+    
+        #Now go through the AIPs, adding geometric delay proportionate to the 
+        #y-coord to the value stored in the AIP to get a net delay projected 
+        #along this sidelobe's vector.
+        SideLobeDelays += delayRamp*yVals;
+        #N.B. "+" because El is +x rotation: +y is farther so, real delay > 0.
+       
+        #now compute the total beam gain. This is a complex sum across all the 
+        #AIP phasors.
+        w=2.*pi*c/self.wavelength;
+        SideLobeComplexDelays=exp(1.j*w*np.matrix(SideLobeDelays,dtype=complex));
+               
+        complexGain = sum(SideLobeComplexDelays);
+        gain = np.absolute(complexGain);
+        phase = np.angle(complexGain);
+        #Now we have the net delay per AIP, so sum over the Array
+        #Calculate the 
+        return(gain);
+        
+
     
     def AzRotate(self,az):
         # provides the y coordinates of the array AIPs, in
@@ -81,27 +106,28 @@ class beam(object):
             AIPyValsInAzFrame[i] = -Xarray[i]*sinAz + Yarray[i]*cosAz;
             
         return(AIPyValsInAzFrame);    
-   
-    def SetRampDelays(self,el,ArrayYs):
-        #Caution: you better have performed AzRotate first!
-        #We are going to load the BeamDelays, as needed to create
-        #the squint angle el, in the az frame defined by AzGrid.
-        #(el is the "squint" angle away from aperture boresight)
+       
+        
+    def IncrementAIPDelays(self,el,AIPYs):    
         
         c= 3e8;  #m/sec, speed of light
         
         #how much addtl delay must we add for every meter in -x
         delayRamp = sin(el)/c;  #something like this
     
-        #First, make a temp linear array pointer into BeamDelays:
-        #BeamDelayArray=self.BeamDelays.flat;
-        
         #Now go through the AIPs, adding delay proportionate to the y-coord
         for i in range(0,self.BeamDelays.size):
-            #N.B. BeamDelayArray == BeamDelays so we are loading "both."
-            self.BeamDelays[i]= -delayRamp*ArrayYs[i];
-            #N.B. "-" because El is +x rotation: +y is farther so delay < 0.
+            self.BeamDelays[i] -= delayRamp*AIPYs[i];
+            #N.B. "-" 'because'cause El is +x rotation: +y is farther so correction < 0.
 
+
+    def SetAIPDelays(self,el,AIPYs):
+        #Caution: you better have performed AzRotate first!
+        #We are going to load the BeamDelays, as needed to create
+        #the squint angle el, in the az frame defined by AzGrid.
+        #(el is the "squint" angle away from aperture boresight)
+        self.BeamDelays[:]=0.;
+        self.IncrementAIPDelays(el,AIPYs);
         
     def aim(self,az,el):  #Loads the Delays for a commanded beam direction.
         #Transform all the array AIP grid locations to the Az frame 
@@ -109,25 +135,13 @@ class beam(object):
         self.BeamAzAngle=az;  # make these part of the class state.
         self.BeamElAngle=el;
         #RFF will this syntax work?
-        AIPyValsinAzFrame=self.AzRotate(az);  #x-form to az frame.
+        AIPyValsInAzFrame=self.AzRotate(az);  #x-form to az frame.
         
         # Now, in this new frame, where we can...
         # apply the needed phase delays to all AIP to squint through el.
-        # (This function will set the BeamDelays)
-        #RFF change this function to return the delays, and add them here 
-        #afterwards.
-        self.SetRampDelays(el,AIPyValsinAzFrame);
+        self.SetAIPDelays(el,AIPyValsInAzFrame);
     
-    #RFF is this used for anything?    
-    def AzAngle(self,whichElement):
-        Xarray=self.Xgrid.A1; #Danger: no copy. ObjRef.
-        Yarray=self.Ygrid.A1;
-        angle = arctan2(Yarray[i],Xarray[i]);
-        return(angle);
-       
-    # Determines antenna gain along a single particular beam direction   
-    #def calcGain(Az,El): 
-        #Should have already loaded BeamDelays state
+
           
 
 #------------------------------------------------------------------
@@ -138,24 +152,20 @@ def beamFormExample(az=0.,el=30/57.3,Nulls=np.matrix([[0],[0]])):
    B = beam();  # TODO I would like to pass in the AIP grid someday.
    
    B.aim(az,el);  #This calculates the delays needed to aim the beam.
-   
-  
+    
    #Now compute and plot the beam power for all Az-El
-   
-   #Also note a basic metric, the max ratio of all sidelobes to main beam pwr.
-   
-   #we need to define the domain
-  
-   #Somewhat arbitrarily, we'll make ArrayFactor 11x11.
+
+   #Here, chosing the domain for the ArrayFactor calculation.
    ElRange=np.linspace(0.,31.,30)/57.3; 
    AzRange=np.linspace(-180.,181.,36)/57.3;
    ArrayFactor = np.zeros([36,30]);  #answer will go here.
    
    for i in range(0,AzRange.size):
        for j in range(0, ElRange.size):
+           
            ArrayFactor[i,j]=B.calcGain(AzRange[i],ElRange[j]);
            
-           
+   return(ArrayFactor)        
             
 
    # for i in range (0,Nulls.shape[0])  #iterate through list of Nulls 
@@ -166,18 +176,18 @@ def beamFormExample(az=0.,el=30/57.3,Nulls=np.matrix([[0],[0]])):
    
    #For a first step, we will want to know the power radiated along the 
    #null direction, as a consequence of the beam forming already completed.
-   #(We could get lucky and be in a null already!  ...but, it's not likely.)
+
    
    
    #Transform the ApertureGrids to the Null Az coord frame.
    #Hey, are we going to just want a long vector of AIP coords?
    #(That is, I have not yet found any use for the 2-d grid...)
-   [XnullGrid,YnullGrid]=B.AzRotate(ApertureXgrid,ApertureYgrid,NullAz);
+   #[XnullGrid,YnullGrid]=B.AzRotate(ApertureXgrid,ApertureYgrid,NullAz);
    
    # Seteup memory for the increments we want to create nulls, and the
    # time delays coming from the actual null El angle.
-   NullDelays=np.matrix(BeamDelays);  # this syntax does a deep copy. 
-   GeomDelays=np.matrix(BeamDelays);
+   #NullDelays=np.matrix(BeamDelays);  # this syntax does a deep copy. 
+   #GeomDelays=np.matrix(BeamDelays);
    
    #Now, to each of the AIP array elements, add the perceived delay added
    #by the geometry pertaining to the Null's Elevation angle.
@@ -185,7 +195,7 @@ def beamFormExample(az=0.,el=30/57.3,Nulls=np.matrix([[0],[0]])):
    #HEY  do I need RampSubtract, instead?  I'm not changing the delay in 
    #AIP memory, but instead adding the physical space delay that will happen
    #from geometry when we look into the array at this El angle.
-   GeomDelays=RampAdd(NullEl,Xgrid,Ygrid) + NullDelays;
+   #GeomDelays=RampAdd(NullEl,Xgrid,Ygrid) + NullDelays;
    
    #Now that we have a null, compute the beam power for it.  It should match
    #one of the points in the plot made previously.  Now, however, we can fix it
@@ -200,7 +210,7 @@ def beamFormExample(az=0.,el=30/57.3,Nulls=np.matrix([[0],[0]])):
    #90deg rotation. Like the vector, the delay sensitivity is also 2-d, a 
    #dX/dPhase and dy/dPhase pair, and the effectivity of adjusting the phase
    #of an AIP will be the dot product of this sensitivity and the error vector.
-   DelaySensitivity=calcDelaySensitivity(GeomDelays);
+   #DelaySensitivity=calcDelaySensitivity(GeomDelays);
    
 
 # here's the Main.  Takes Az and El of the commanded beam direction, and 
@@ -208,6 +218,6 @@ def beamFormExample(az=0.,el=30/57.3,Nulls=np.matrix([[0],[0]])):
 # N.B. This is not a class method.
 # N.B. fn definition syntax that puts defaults into the parameter list.
 
-beamFormExample();
+ArrayFactor= beamFormExample();
     
     
