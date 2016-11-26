@@ -23,33 +23,37 @@ def beamFormExample(az=0.,el=30/57.3,Nulls=np.matrix([[0],[0]])):
    B.aim(az,el);  #This calculates the delays needed to aim the beam.
    
   
-   #Now that we know the delays, compute and plot the beam power for all Az-El
+   #Now compute and plot the beam power for all Az-El
+   
    #Also note a basic metric, the max ratio of all sidelobes to main beam pwr.
-   #TODO: do that.
+   
+   #we need to define the domain
   
-   #To calculate the ArrayFactor (an array itself, of  expressing the gain of 
-   #of the antenna array, at different angles) we need to define the domain
-  
-   #Somewhat arbitrarily, we'll make ArrayFactor the same shape.
-   ArrayFactor = np.zeros(B.shape); 
-   ArrayFactorAz = np.zeros(B.shape);
-   ArrayFactorEl = np.zeros(B.shape);
-   ArrayFactorArray=ArrayFactor.reshape(B.elements); #Danger: no copy. ObjRef.
-   for i in range(0,B.elements):
-       AzAFA[i]=B.AzAngle(i);
+   #Somewhat arbitrarily, we'll make ArrayFactor 11x11.
+   ElRange=np.linspace(0.,31.,30)/57.3; 
+   AzRange=np.linspace(-180.,181.,36)/57.3;
+   ArrayFactor = np.zeros([36,30]);  #answer will go here.
+   
+   for i in range(0,AzRange.size):
+       for j in range(0, ElRange.size):
+           ArrayFactor[i,j]=B.calcGain(AzRange[i],ElRange[i]);
+           
+           
+           
+   
+
        
-  
-  
 
    # for i in range (0,Nulls.shape[0])  #iterate through list of Nulls 
    i=0;  # leave iteration for later, hardcode to just one Null for now.
    
    #Next, we will add a null.
+   NullAz=Nulls[0,i];  NullEl=Nulls[1,i];  #pull the values from the input.
+   
    #For a first step, we will want to know the power radiated along the 
    #null direction, as a consequence of the beam forming already completed.
    #(We could get lucky and be in a null already!  ...but, it's not likely.)
    
-   NullAz=Nulls[0,i];  NullEl=Nulls[1,i];  #pull the values from the input.
    
    #Transform the ApertureGrids to the Null Az coord frame.
    #Hey, are we going to just want a long vector of AIP coords?
@@ -113,19 +117,11 @@ class beam(object):
                          [-3.,-2.,-1.,0.,1.,2.,3.],
                          [-3.,-2.,-1.,0.,1.,2.,3.]]);
         
-        self.gridshape = self.Ygrid.shape; 
         self.elements = self.Ygrid.size;  #number of elements
-        
-        #These next variables are locations transformed into Az coords.
-        self.AzYgrid = np.zeros(self.gridshape);
-        self.AzYarray =AzYgrid.reshape(elements);
-        
-        self.AzXgrid = np.zeros(self.gridshape); 
-        self.AzXarray= AzXgrid.reshape(elements);
                
         #This initial condition sends a beam out the boresight.  Remember, the
         #zeros are the phase angles of the unit power vectors at each AIP.
-        self.BeamDelays= np.zeros(self.gridshape);
+        self.BeamDelays= np.zeros(self.elements);
         
     def AzRotate(self,az):
         # provides the x and y positions of the array AIPs, in
@@ -139,15 +135,20 @@ class beam(object):
         # Python question: can I assume the "self." eg on self.Xgrid? A:no.
         
         #I need a view or something to index through with one iterator. In 
-        #the below, matrix.reshape does not remove a dimension, but .A1 method 
-        #returns a collapsed Array view. (view means objref: not a copy)
+        #the below,  .A1 method returns a collapsed Array view.
         Xarray=self.Xgrid.A1;       #Danger: no copy. ObjRef.
         Yarray=self.Ygrid.A1;
+        #initialize space for the results
+        AzYarray = np.ndarray([self.elements]);
+        AzXarray = np.ndarray([self.elements]);
+        
         for i in range(0, self.elements) :
-            self.AzYgrid.A1[i] = -Xarray[i]*sinAz + Yarray[i]*cosAz;
-            self.AzXgrid.A1[i] = Xarray[i]*cosAz + Yarray[i]*sinAz;
+            AzYarray[i] = -Xarray[i]*sinAz + Yarray[i]*cosAz;
+            AzXarray[i] =  Xarray[i]*cosAz + Yarray[i]*sinAz;
+            
+        return([AzXarray,AzYarray]);    
    
-    def RampAdd(el):
+    def RampAdd(self,el,Yarray):
         #Caution: you better have performed AzRotate first!
         #We are going to load the BeamDelays, as needed to create
         #the squint angle el, in the az frame defined by AzGrid.
@@ -159,11 +160,11 @@ class beam(object):
         delayRamp = sin(el)/c;  #something like this
     
         #First, make a temp linear array pointer into BeamDelays:
-        BeamDelayArray=self.BeamDelays.reshape(self.elements)
+        BeamDelayArray=self.BeamDelays.flat;
         #Now go through the AIPs, adding delay proportionate to the x-coord
-        for i in range(0,self.elements):
+        for i in range(0,self.BeamDelays.size):
             #N.B. BeamDelayArray == BeamDelays so we are loading "both."
-            BeamDelayArray[i]= -delayRamp*AzYgrid[i];
+            BeamDelayArray[i]= -delayRamp*Yarray[i];
             #N.B. "-" because El is +x rotation: +y is farther so delay < 0.
 
         
@@ -172,17 +173,27 @@ class beam(object):
         #Python Q: is self already local in AzRotate?
         self.BeamAzAngle=az;  # make these part of the class state.
         self.BeamElAngle=el;
-        self.AzRotate(az);  #x-form to az frame, where we can...
+        #RFF will this syntax work?
+        [AzXarray,AzYarray]=self.AzRotate(az);  #x-form to az frame.
+        
+        # Now, in this new frame, where we can...
         # apply the needed phase delays to all AIP to squint through el.
         # (This function will set the BeamDelays)
-        self.RampAdd(el);
-        
+        #RFF change this function to return the delays, and add them here 
+        #afterwards.
+        self.RampAdd(el,AzYarray);
+    
+    #RFF is this used for anything?    
     def AzAngle(self,whichElement):
-        Xarray=self.Xgrid.reshape(self.elements); #Danger: no copy. ObjRef.
-        Yarray=self.Ygrid.reshape(self.elements);
-        angle = atan2(Yarray[i],Xarray[i]);
+        Xarray=self.Xgrid.A1; #Danger: no copy. ObjRef.
+        Yarray=self.Ygrid.A1;
+        angle = arctan2(Yarray[i],Xarray[i]);
         return(angle);
-                   
+       
+    # Determines antenna gain along a single particular beam direction   
+    #def calcGain(Az,El): 
+        #Should have already loaded BeamDelays state
+          
 
 #------------------------------------------------------------------
 
@@ -192,6 +203,6 @@ class beam(object):
 # N.B. This is not a class method.
 # N.B. fn definition syntax that puts defaults into the parameter list.
 
-#beamFormExample();
+beamFormExample();
     
     
